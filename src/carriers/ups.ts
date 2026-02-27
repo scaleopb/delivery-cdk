@@ -36,7 +36,7 @@ function mapUPSStatus(statusCode: string, statusType: string): TrackingStatus {
     X: 'exception',
   };
 
-  if (typeMap[statusType]) {
+  if (statusType in typeMap) {
     return typeMap[statusType];
   }
 
@@ -93,12 +93,9 @@ function parseEvents(activities: UPSActivity[]): TrackingEvent[] {
 
 export function createUPSCarrier(config: UPSConfig): Carrier {
   let cachedToken: { token: string; expiresAt: number } | null = null;
+  let tokenPromise: Promise<string> | null = null;
 
-  async function getAccessToken(): Promise<string> {
-    if (cachedToken && Date.now() < cachedToken.expiresAt) {
-      return cachedToken.token;
-    }
-
+  async function fetchNewToken(): Promise<string> {
     const credentials = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
 
     const res = await fetch(`${UPS_API_BASE}/security/v1/oauth/token`, {
@@ -117,11 +114,27 @@ export function createUPSCarrier(config: UPSConfig): Carrier {
     }
 
     const data = await res.json();
+
+    if (!data.access_token) {
+      throw new Error('UPS auth response missing access_token');
+    }
+
+    const expiresIn = Math.max(Number(data.expires_in) || 3600, 120);
     cachedToken = {
       token: data.access_token,
-      expiresAt: Date.now() + (Number(data.expires_in) - 60) * 1000,
+      expiresAt: Date.now() + (expiresIn - 60) * 1000,
     };
     return cachedToken.token;
+  }
+
+  async function getAccessToken(): Promise<string> {
+    if (cachedToken && Date.now() < cachedToken.expiresAt) {
+      return cachedToken.token;
+    }
+    if (!tokenPromise) {
+      tokenPromise = fetchNewToken().finally(() => { tokenPromise = null; });
+    }
+    return tokenPromise;
   }
 
   return {
@@ -129,6 +142,10 @@ export function createUPSCarrier(config: UPSConfig): Carrier {
     name: 'UPS',
 
     async track(trackingNumber: string): Promise<TrackingResult> {
+      if (!trackingNumber || trackingNumber.length > 50) {
+        throw new Error(`Invalid UPS tracking number: ${trackingNumber}`);
+      }
+
       const token = await getAccessToken();
 
       const res = await fetch(
