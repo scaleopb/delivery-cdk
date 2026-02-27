@@ -98,35 +98,35 @@ export function createUPSCarrier(config: UPSConfig): Carrier {
 
   async function fetchNewToken(): Promise<string> {
     try {
-    const credentials = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
+      const credentials = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
 
-    const res = await fetch(`${UPS_API_BASE}/security/v1/oauth/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Basic ${credentials}`,
-      },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-      }),
-    });
+      const res = await fetch(`${UPS_API_BASE}/security/v1/oauth/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: `Basic ${credentials}`,
+        },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+        }),
+      });
 
-    if (!res.ok) {
-      throw new Error(`UPS auth failed: ${res.status}`);
-    }
+      if (!res.ok) {
+        throw new Error(`UPS auth failed: ${res.status}`);
+      }
 
-    const data = await res.json();
+      const data = await res.json();
 
-    if (!data.access_token) {
-      throw new Error('UPS auth response missing access_token');
-    }
+      if (!data.access_token) {
+        throw new Error('UPS auth response missing access_token');
+      }
 
-    const expiresIn = Math.max(Number(data.expires_in) || 3600, 120);
-    cachedToken = {
-      token: data.access_token,
-      expiresAt: Date.now() + (expiresIn - 60) * 1000,
-    };
-    return cachedToken.token;
+      const expiresIn = Math.max(Number(data.expires_in) || 3600, 120);
+      cachedToken = {
+        token: data.access_token,
+        expiresAt: Date.now() + (expiresIn - 60) * 1000,
+      };
+      return cachedToken.token;
     } catch (err) {
       authCooldownUntil = Date.now() + 10_000;
       throw err;
