@@ -1,4 +1,4 @@
-export type CarrierCode = 'fedex' | 'ups' | 'dhl' | 'usps';
+export type CarrierCode = 'fedex' | 'ups' | 'dhl' | 'usps' | 'nova_poshta';
 
 export type TrackingStatus =
   | 'pending'
