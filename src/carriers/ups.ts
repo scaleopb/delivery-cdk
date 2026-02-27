@@ -94,8 +94,10 @@ function parseEvents(activities: UPSActivity[]): TrackingEvent[] {
 export function createUPSCarrier(config: UPSConfig): Carrier {
   let cachedToken: { token: string; expiresAt: number } | null = null;
   let tokenPromise: Promise<string> | null = null;
+  let authCooldownUntil = 0;
 
   async function fetchNewToken(): Promise<string> {
+    try {
     const credentials = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
 
     const res = await fetch(`${UPS_API_BASE}/security/v1/oauth/token`, {
@@ -125,11 +127,18 @@ export function createUPSCarrier(config: UPSConfig): Carrier {
       expiresAt: Date.now() + (expiresIn - 60) * 1000,
     };
     return cachedToken.token;
+    } catch (err) {
+      authCooldownUntil = Date.now() + 10_000;
+      throw err;
+    }
   }
 
   async function getAccessToken(): Promise<string> {
     if (cachedToken && Date.now() < cachedToken.expiresAt) {
       return cachedToken.token;
+    }
+    if (Date.now() < authCooldownUntil) {
+      throw new Error('UPS auth in cooldown after recent failure');
     }
     if (!tokenPromise) {
       tokenPromise = fetchNewToken().finally(() => { tokenPromise = null; });
@@ -154,7 +163,7 @@ export function createUPSCarrier(config: UPSConfig): Carrier {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,
-            transId: `track-${Date.now()}`,
+            transId: `track-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             transactionSrc: 'delivery-cdk',
           },
         }
