@@ -7,36 +7,23 @@ interface UPSConfig {
   clientSecret: string;
 }
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+interface UPSAddress {
+  city?: string;
+  stateProvince?: string;
+  countryCode?: string;
+}
 
-async function getAccessToken(config: UPSConfig): Promise<string> {
-  if (cachedToken && Date.now() < cachedToken.expiresAt) {
-    return cachedToken.token;
-  }
+interface UPSStatus {
+  code?: string;
+  type?: string;
+  description?: string;
+}
 
-  const credentials = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
-
-  const res = await fetch(`${UPS_API_BASE}/security/v1/oauth/token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: `Basic ${credentials}`,
-    },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`UPS auth failed: ${res.status} ${await res.text()}`);
-  }
-
-  const data = await res.json();
-  cachedToken = {
-    token: data.access_token,
-    expiresAt: Date.now() + (Number(data.expires_in) - 60) * 1000,
-  };
-  return cachedToken.token;
+interface UPSActivity {
+  date?: string;
+  time?: string;
+  location?: { address?: UPSAddress };
+  status?: UPSStatus;
 }
 
 function mapUPSStatus(statusCode: string, statusType: string): TrackingStatus {
@@ -69,20 +56,31 @@ function mapUPSStatus(statusCode: string, statusType: string): TrackingStatus {
   return codeMap[statusCode] ?? 'unknown';
 }
 
-function parseEvents(activities: any[]): TrackingEvent[] {
-  return activities.map((activity: any) => {
-    const location = [
-      activity.location?.address?.city,
-      activity.location?.address?.stateProvince,
-      activity.location?.address?.countryCode,
-    ]
+function formatUPSDate(date: string): string {
+  if (date.length !== 8) return date;
+  return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+}
+
+function formatUPSTimestamp(date: string, time: string): string {
+  const formattedDate = formatUPSDate(date);
+  if (formattedDate === date) return date;
+  if (time.length !== 6) return formattedDate;
+  return `${formattedDate}T${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
+}
+
+function parseEvents(activities: UPSActivity[]): TrackingEvent[] {
+  return activities.map((activity) => {
+    const address = activity.location?.address;
+    const location = [address?.city, address?.stateProvince, address?.countryCode]
       .filter(Boolean)
       .join(', ');
 
     const timestamp =
       activity.date && activity.time
-        ? `${activity.date.slice(0, 4)}-${activity.date.slice(4, 6)}-${activity.date.slice(6, 8)}T${activity.time.slice(0, 2)}:${activity.time.slice(2, 4)}:${activity.time.slice(4, 6)}`
-        : activity.date ?? '';
+        ? formatUPSTimestamp(activity.date, activity.time)
+        : activity.date
+          ? formatUPSDate(activity.date)
+          : '';
 
     return {
       timestamp,
@@ -94,12 +92,44 @@ function parseEvents(activities: any[]): TrackingEvent[] {
 }
 
 export function createUPSCarrier(config: UPSConfig): Carrier {
+  let cachedToken: { token: string; expiresAt: number } | null = null;
+
+  async function getAccessToken(): Promise<string> {
+    if (cachedToken && Date.now() < cachedToken.expiresAt) {
+      return cachedToken.token;
+    }
+
+    const credentials = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64');
+
+    const res = await fetch(`${UPS_API_BASE}/security/v1/oauth/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${credentials}`,
+      },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`UPS auth failed: ${res.status}`);
+    }
+
+    const data = await res.json();
+    cachedToken = {
+      token: data.access_token,
+      expiresAt: Date.now() + (Number(data.expires_in) - 60) * 1000,
+    };
+    return cachedToken.token;
+  }
+
   return {
     code: 'ups',
     name: 'UPS',
 
     async track(trackingNumber: string): Promise<TrackingResult> {
-      const token = await getAccessToken(config);
+      const token = await getAccessToken();
 
       const res = await fetch(
         `${UPS_API_BASE}/api/track/v1/details/${encodeURIComponent(trackingNumber)}`,
@@ -114,7 +144,7 @@ export function createUPSCarrier(config: UPSConfig): Carrier {
       );
 
       if (!res.ok) {
-        throw new Error(`UPS tracking failed: ${res.status} ${await res.text()}`);
+        throw new Error(`UPS tracking failed: ${res.status}`);
       }
 
       const data = await res.json();
@@ -126,13 +156,14 @@ export function createUPSCarrier(config: UPSConfig): Carrier {
       }
 
       const currentStatus = pkg.currentStatus ?? pkg.activity?.[0]?.status;
-      const activities = pkg.activity ?? [];
+      const activities: UPSActivity[] = pkg.activity ?? [];
+      const rawDeliveryDate = pkg.deliveryDate?.[0]?.date ?? shipment?.deliveryDate?.[0]?.date ?? null;
 
       return {
         carrier: 'ups',
         trackingNumber,
         status: mapUPSStatus(currentStatus?.code ?? '', currentStatus?.type ?? ''),
-        estimatedDelivery: pkg.deliveryDate?.[0]?.date ?? shipment?.deliveryDate?.[0]?.date ?? null,
+        estimatedDelivery: rawDeliveryDate ? formatUPSDate(rawDeliveryDate) : null,
         events: parseEvents(activities),
       };
     },
