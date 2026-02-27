@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { CarrierRegistry } from './registry.js';
-import { createFedExCarrier } from './carriers/index.js';
+import { createFedExCarrier, createUPSCarrier } from './carriers/index.js';
 import type { CarrierCode } from './types/tracking.js';
 
 const app = new Hono();
@@ -14,6 +14,15 @@ const fedexClientSecret = process.env.FEDEX_CLIENT_SECRET;
 if (fedexClientId && fedexClientSecret) {
   registry.register(
     createFedExCarrier({ clientId: fedexClientId, clientSecret: fedexClientSecret })
+  );
+}
+
+const upsClientId = process.env.UPS_CLIENT_ID;
+const upsClientSecret = process.env.UPS_CLIENT_SECRET;
+
+if (upsClientId && upsClientSecret) {
+  registry.register(
+    createUPSCarrier({ clientId: upsClientId, clientSecret: upsClientSecret })
   );
 }
 
